@@ -88,19 +88,6 @@ orders to their items, payment, and rating.
 `Orders(order_date)` and `Orders(delivery_status)` support the monthly and status aggregations.
 See `sql/02_views_and_indexes.sql` for the rationale.
 
-## Repository layout
-
-```
-sql/
-  01_schema_and_load.sql      schema, staging table, normalization inserts
-  02_views_and_indexes.sql    view + indexes (with rationale)
-  03_example_queries.sql      WHERE / GROUP BY / HAVING / many-to-many examples
-analysis/
-  foodpanda_analysis.Rmd      R analysis reading directly from MySQL
-docs/figures/                 selected charts
-data/                         put foodpanda.csv here (not committed)
-```
-
 ## Reproducing the project
 
 1. Install MySQL 8+ and R with `DBI`, `RMySQL`, `ggplot2`, `dplyr`.
