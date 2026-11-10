@@ -1,0 +1,150 @@
+---
+title: "Foodpanda: EDA and Statistical Analysis"
+output: html_document
+---
+
+Reconstructed from the original notebook. All data is read from the MySQL `foodpanda` database
+(no CSV loading in the analysis). Set these environment variables first (e.g. in `~/.Renviron`):
+`FOODPANDA_DB_USER`, `FOODPANDA_DB_PASSWORD`, `FOODPANDA_DB_HOST`, `FOODPANDA_DB_PORT`.
+
+```{r setup, message=FALSE}
+library(DBI); library(RMySQL); library(ggplot2); library(dplyr)
+
+con <- dbConnect(
+  MySQL(),
+  user     = Sys.getenv("FOODPANDA_DB_USER", "root"),
+  password = Sys.getenv("FOODPANDA_DB_PASSWORD"),
+  dbname   = "foodpanda",
+  host     = Sys.getenv("FOODPANDA_DB_HOST", "localhost"),
+  port     = as.integer(Sys.getenv("FOODPANDA_DB_PORT", "3306"))
+)
+dbListTables(con)
+```
+
+## 1. Customer demographics
+
+```{r demographics}
+age_data <- dbGetQuery(con, "SELECT age, COUNT(*) AS count FROM Customers WHERE age IS NOT NULL GROUP BY age")
+ggplot(age_data, aes(age, count)) + geom_col() +
+  labs(title = "Distribution of Age Categories", x = "Age Group", y = "Customers")
+
+gen_data <- dbGetQuery(con, "SELECT gender, COUNT(*) AS count FROM Customers WHERE gender IS NOT NULL GROUP BY gender")
+ggplot(gen_data, aes(gender, count)) + geom_col() +
+  labs(title = "Distribution of Gender Categories", x = "Gender", y = "Customers")
+```
+
+## 2. Restaurant performance
+
+```{r restaurants}
+by_restaurant <- dbGetQuery(con, "
+SELECT r.restaurant_name,
+       COUNT(DISTINCT o.order_id)     AS num_orders,
+       COUNT(DISTINCT o.customer_id)  AS num_customers,
+       AVG(rt.rating)                 AS avg_rating
+FROM Orders o
+JOIN Restaurants r ON r.restaurant_id = o.restaurant_id
+LEFT JOIN Ratings rt ON rt.order_id = o.order_id
+GROUP BY r.restaurant_name")
+
+revenue <- dbGetQuery(con, "
+SELECT r.restaurant_name, SUM(oi.price * oi.quantity) AS total_revenue
+FROM Orders o
+JOIN Restaurants r  ON r.restaurant_id = o.restaurant_id
+JOIN OrderItems oi  ON oi.order_id = o.order_id
+GROUP BY r.restaurant_name ORDER BY total_revenue DESC")
+
+bar_h <- function(d, x, y, title, lab) {
+  ggplot(d, aes(reorder(.data[[x]], .data[[y]]), .data[[y]], fill = .data[[y]])) +
+    geom_col() + coord_flip() +
+    labs(title = title, x = "Restaurant", y = lab) +
+    theme_minimal() + theme(legend.position = "none")
+}
+bar_h(by_restaurant, "restaurant_name", "avg_rating",    "Average Rating by Restaurant", "Average rating")
+bar_h(by_restaurant, "restaurant_name", "num_orders",    "Orders per Restaurant",        "Orders")
+bar_h(by_restaurant, "restaurant_name", "num_customers", "Customers per Restaurant",     "Customers")
+bar_h(revenue,       "restaurant_name", "total_revenue", "Total Revenue per Restaurant", "Revenue")
+```
+
+## 3. Order volume over time
+
+```{r monthly}
+monthly <- dbGetQuery(con, "
+SELECT YEAR(order_date) AS yr, MONTH(order_date) AS mo, COUNT(order_id) AS total_orders
+FROM Orders GROUP BY yr, mo ORDER BY yr, mo") |>
+  mutate(date = as.Date(sprintf("%d-%02d-01", yr, mo)))
+
+ggplot(monthly, aes(date, total_orders)) + geom_col(fill = "steelblue") +
+  labs(title = "Monthly Order Frequency", x = "Month", y = "Orders") + theme_minimal()
+```
+
+The first month (July 2023) is a partial month, which explains the small first bar.
+
+## 4. What drives ratings?
+
+### 4a. Delivery problems (cancelled/delayed) vs. rating
+
+```{r problems}
+monthly_problem <- dbGetQuery(con, "
+SELECT YEAR(o.order_date) AS yr, MONTH(o.order_date) AS mo,
+       SUM(o.delivery_status IN ('Cancelled','Delayed')) / COUNT(o.order_id) AS problem_rate,
+       AVG(rt.rating) AS avg_rating
+FROM Orders o LEFT JOIN Ratings rt ON rt.order_id = o.order_id
+GROUP BY yr, mo ORDER BY yr, mo") |>
+  filter(!is.na(problem_rate), !is.na(avg_rating))
+
+cor(monthly_problem$problem_rate, monthly_problem$avg_rating)
+summary(lm(avg_rating ~ problem_rate, data = monthly_problem))
+
+ggplot(monthly_problem, aes(problem_rate, avg_rating)) + geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title = "Problem Rate vs Average Rating (Monthly)",
+       x = "Problem rate", y = "Average rating") + theme_minimal()
+```
+
+### 4b. Order-level model and t-test
+
+```{r order-level}
+reg <- dbGetQuery(con, "
+SELECT (o.delivery_status IN ('Cancelled','Delayed')) AS problem_flag,
+       rt.rating, oi.price
+FROM Orders o
+JOIN Ratings rt    ON rt.order_id = o.order_id
+JOIN OrderItems oi ON oi.order_id = o.order_id")
+
+summary(lm(rating ~ problem_flag + price, data = reg))
+t.test(rating ~ problem_flag, data = reg)
+```
+
+### 4c. Loyalty points vs. rating
+
+```{r loyalty}
+loyal <- dbGetQuery(con, "
+SELECT c.loyalty_points, rt.rating
+FROM Customers c
+JOIN Orders o   ON o.customer_id = c.customer_id
+JOIN Ratings rt ON rt.order_id = o.order_id")
+
+cor(loyal$loyalty_points, loyal$rating)
+summary(lm(rating ~ loyalty_points, data = loyal))
+
+loyal$group <- cut(loyal$loyalty_points, c(-Inf, 50, 150, Inf), labels = c("Low", "Medium", "High"))
+ggplot(loyal, aes(group, rating)) + geom_boxplot(fill = "lightblue") +
+  labs(title = "Ratings by Customer Loyalty Level", x = "Loyalty group", y = "Rating") + theme_minimal()
+```
+
+### 4d. Age group vs. rating
+
+```{r age}
+age_rate <- dbGetQuery(con, "
+SELECT c.age, r.rating
+FROM Customers c JOIN Orders o ON o.customer_id = c.customer_id
+JOIN Ratings r ON r.order_id = o.order_id")
+
+ggplot(age_rate, aes(age, rating, fill = age)) + geom_boxplot() +
+  labs(title = "Rating Distribution by Age Group", x = "Age group", y = "Rating") +
+  theme_minimal() + theme(legend.position = "none")
+```
+
+```{r cleanup}
+dbDisconnect(con)
+```
