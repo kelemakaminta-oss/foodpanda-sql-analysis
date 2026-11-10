@@ -104,21 +104,25 @@ data/                         put foodpanda.csv here (not committed)
 ## Reproducing the project
 
 1. Install MySQL 8+ and R with `DBI`, `RMySQL`, `ggplot2`, `dplyr`.
-2. Run `sql/01_schema_and_load.sql` up to the `raw_foodpanda` table definition.
-3. Load the CSV into the staging table, for example:
+2. Download the dataset from [Kaggle: Foodpanda Analysis Dataset 2025](https://www.kaggle.com/datasets/nabihazahid/foodpanda-analysis-dataset-2025) and save the CSV as `data/foodpanda.csv` (rename it if the downloaded file has a different name).
+3. Run `sql/01_schema_and_load.sql` **up to and including** the `raw_foodpanda` table definition.
+4. Load the CSV into the staging table:
    ```sql
    LOAD DATA LOCAL INFILE 'data/foodpanda.csv' INTO TABLE raw_foodpanda
    FIELDS TERMINATED BY ',' ENCLOSED BY '"' LINES TERMINATED BY '\n' IGNORE 1 LINES;
    ```
-   (Dates in the CSV are expected as `MM/DD/YYYY`.)
-4. Run the `INSERT ... SELECT` statements at the bottom of the same file, then `sql/02_views_and_indexes.sql`.
-5. Set `FOODPANDA_DB_USER`, `FOODPANDA_DB_PASSWORD`, `FOODPANDA_DB_HOST`, `FOODPANDA_DB_PORT` and knit
-   `analysis/foodpanda_analysis.Rmd`.
+   The load script expects dates in `MM/DD/YYYY` format. `LOCAL INFILE` must be enabled on both
+   the MySQL server and client (`SET GLOBAL local_infile = 1;`), or you can use your client's
+   import wizard (e.g. MySQL Workbench's Table Data Import Wizard) instead.
+5. Run the remaining `INSERT ... SELECT` statements at the bottom of `sql/01_schema_and_load.sql`,
+   then run `sql/02_views_and_indexes.sql`.
+6. Set the environment variables `FOODPANDA_DB_USER`, `FOODPANDA_DB_PASSWORD`, `FOODPANDA_DB_HOST`,
+   and `FOODPANDA_DB_PORT`, then knit `analysis/foodpanda_analysis.Rmd`.
 
 ## Data
 
-The raw Foodpanda customer/order dataset is not included in this repo. Add its source/license here.
+The raw Foodpanda customer/order dataset is from [Kaggle: Foodpanda Analysis Dataset 2025] (https://www.kaggle.com/datasets/nabihazahid/foodpanda-analysis-dataset-2025).
 
 ## Credits
 
-Originally built as a database course capstone. <!-- add teammates' names -->
+Originally built as a database course capstone. 
